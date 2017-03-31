@@ -31,6 +31,53 @@ def build_vae_loss(img_rows, img_cols, z_log_var, z_mean):
         return xent_loss + kl_loss
     return vae_loss
 
+def build_decoder_model(latent_dim, batch_size):
+    intermediate_dim = 128
+    # input image dimensions
+    img_rows, img_cols, img_chns = 28, 28, 1
+    # number of convolutional filters to use
+    nb_filters = 64
+    # convolution kernel size
+    nb_conv = 3
+
+    z = Input(shape=(latent_dim,))
+
+    # we instantiate these layers separately so as to reuse them later
+    decoder_hid = Dense(intermediate_dim, activation='relu')
+    decoder_upsample = Dense(nb_filters * 14 * 14, activation='relu')
+
+    output_shape = (batch_size, 14, 14, nb_filters)
+
+    decoder_reshape = Reshape(output_shape[1:])
+    decoder_deconv_1 = Deconvolution2D(nb_filters, nb_conv, nb_conv,
+                                       output_shape,
+                                       border_mode='same',
+                                       subsample=(1, 1),
+                                       activation='relu', dim_ordering='tf')
+    decoder_deconv_2 = Deconvolution2D(nb_filters, nb_conv, nb_conv,
+                                       output_shape,
+                                       border_mode='same',
+                                       subsample=(1, 1),
+                                       activation='relu', dim_ordering='tf')
+    output_shape = (batch_size, 29, 29, nb_filters)
+    decoder_deconv_3_upsamp = Deconvolution2D(nb_filters, 2, 2,
+                                              output_shape,
+                                              border_mode='valid',
+                                              subsample=(2, 2),
+                                              activation='relu', dim_ordering='tf')
+    decoder_mean_squash = Convolution2D(img_chns, 2, 2,
+                                        border_mode='valid',
+                                        activation='sigmoid', dim_ordering='tf')
+
+    hid_decoded = decoder_hid(z)
+    up_decoded = decoder_upsample(hid_decoded)
+    reshape_decoded = decoder_reshape(up_decoded)
+    deconv_1_decoded = decoder_deconv_1(reshape_decoded)
+    deconv_2_decoded = decoder_deconv_2(deconv_1_decoded)
+    x_decoded_relu = decoder_deconv_3_upsamp(deconv_2_decoded)
+    x_decoded_mean_squash = decoder_mean_squash(x_decoded_relu)
+    return Model(z, x_decoded_mean_squash, name="decoder")    
+
 def build_model(batch_size, encoder_only=False):
     # input image dimensions
     img_rows, img_cols, img_chns = 28, 28, 1
@@ -72,42 +119,10 @@ def build_model(batch_size, encoder_only=False):
             "epsilon_std": epsilon_std
         })([z_mean, z_log_var])
 
-    # we instantiate these layers separately so as to reuse them later
-    decoder_hid = Dense(intermediate_dim, activation='relu')
-    decoder_upsample = Dense(nb_filters * 14 * 14, activation='relu')
+    decoder = build_decoder_model(latent_dim, batch_size)
+    decoded = decoder(z)
 
-    output_shape = (batch_size, 14, 14, nb_filters)
-
-    decoder_reshape = Reshape(output_shape[1:])
-    decoder_deconv_1 = Deconvolution2D(nb_filters, nb_conv, nb_conv,
-                                       output_shape,
-                                       border_mode='same',
-                                       subsample=(1, 1),
-                                       activation='relu', dim_ordering='tf')
-    decoder_deconv_2 = Deconvolution2D(nb_filters, nb_conv, nb_conv,
-                                       output_shape,
-                                       border_mode='same',
-                                       subsample=(1, 1),
-                                       activation='relu', dim_ordering='tf')
-    output_shape = (batch_size, 29, 29, nb_filters)
-    decoder_deconv_3_upsamp = Deconvolution2D(nb_filters, 2, 2,
-                                              output_shape,
-                                              border_mode='valid',
-                                              subsample=(2, 2),
-                                              activation='relu', dim_ordering='tf')
-    decoder_mean_squash = Convolution2D(img_chns, 2, 2,
-                                        border_mode='valid',
-                                        activation='sigmoid', dim_ordering='tf')
-
-    hid_decoded = decoder_hid(z)
-    up_decoded = decoder_upsample(hid_decoded)
-    reshape_decoded = decoder_reshape(up_decoded)
-    deconv_1_decoded = decoder_deconv_1(reshape_decoded)
-    deconv_2_decoded = decoder_deconv_2(deconv_1_decoded)
-    x_decoded_relu = decoder_deconv_3_upsamp(deconv_2_decoded)
-    x_decoded_mean_squash = decoder_mean_squash(x_decoded_relu)
-
-    vae = Model(x, x_decoded_mean_squash)
+    vae = Model(x, decoded)
     return vae
 
 def plot_history(subdir, history):
@@ -316,33 +331,9 @@ def main():
     if args.graph_grid:
         batch_size = 1
 
-        _hid_decoded = Dense(intermediate_dim, activation='relu')
-        _up_decoded = Dense(nb_filters * 14 * 14, activation='relu')
-        _reshape_decoded = Reshape((14, 14, nb_filters))
-        _deconv_1_decoded = Deconvolution2D(nb_filters, nb_conv, nb_conv, (batch_size, 14, 14, nb_filters),
-                                            border_mode='same', subsample=(1, 1), activation='relu', dim_ordering='tf')
-        _deconv_2_decoded = Deconvolution2D(nb_filters, nb_conv, nb_conv, (batch_size, 14, 14, nb_filters),
-                                            border_mode='same', subsample=(1, 1), activation='relu', dim_ordering='tf')
-        _x_decoded_relu = Deconvolution2D(nb_filters, 2, 2, (batch_size, 29, 29, nb_filters),
-                                          border_mode='valid', subsample=(2, 2), activation='relu', dim_ordering='tf')
-        _x_decoded_mean_squash = Convolution2D(img_chns, 2, 2, border_mode='valid', activation='sigmoid', dim_ordering='tf')
-
-        decoder_input = Input(shape=(latent_dim,))
-        layer1 = _hid_decoded(decoder_input)
-        layer2 = _up_decoded(layer1)
-        layer3 = _reshape_decoded(layer2)
-        layer4 = _deconv_1_decoded(layer3)
-        layer5 = _deconv_2_decoded(layer4)
-        layer6 = _x_decoded_relu(layer5)
-        layer7 = _x_decoded_mean_squash(layer6)
-        generator = Model(decoder_input, layer7)
-
-        _hid_decoded.set_weights(decoder_hid.get_weights())
-        _up_decoded.set_weights(decoder_upsample.get_weights())
-        _deconv_1_decoded.set_weights(decoder_deconv_1.get_weights())
-        _deconv_2_decoded.set_weights(decoder_deconv_2.get_weights())
-        _x_decoded_relu.set_weights(decoder_deconv_3_upsamp.get_weights())
-        _x_decoded_mean_squash.set_weights(decoder_mean_squash.get_weights())
+        decoder = build_decoder_model(latent_dim=2, batch_size=1)
+        trained_decoder = model.get_layer("decoder")
+        decoder.set_weights(trained_decoder.get_weights())
 
         # display a 2D manifold of the digits
         n = 15  # figure with 15x15 digits
@@ -359,7 +350,7 @@ def main():
             for j, xi in enumerate(grid_y):
                 z_sample = np.array([[xi, yi]])
                 z_sample = np.tile(z_sample, batch_size).reshape(batch_size, 2)
-                x_decoded = generator.predict(z_sample, batch_size=batch_size)
+                x_decoded = decoder.predict(z_sample, batch_size=batch_size)
                 digit = x_decoded[0].reshape(digit_size, digit_size)
                 figure[i * digit_size: (i + 1) * digit_size,
                        j * digit_size: (j + 1) * digit_size] = digit
