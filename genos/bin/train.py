@@ -108,16 +108,21 @@ def build_model(batch_size, encoder_only=False):
     z_mean = Dense(latent_dim, name="z_mean")(hidden)
     z_log_var = Dense(latent_dim, name="z_log_var")(hidden)
 
+    encoder = Model(x, [z_mean, z_log_var], name="encoder")
+
     if encoder_only:
-        return Model(x, z_mean)
+        return encoder
+
+    encoded_z, encoded_z_lv = encoder(x)
 
     # note that "output_shape" isn't necessary with the TensorFlow backend
     # so you could write `Lambda(sampling)([z_mean, z_log_var])`
-    z = Lambda(sampling, output_shape=(latent_dim,), arguments= {
+    z = Lambda(sampling, output_shape=(latent_dim,), name="sampling",
+        arguments= {
             "batch_size": batch_size,
             "latent_dim": latent_dim,
             "epsilon_std": epsilon_std
-        })([z_mean, z_log_var])
+        })([encoded_z, encoded_z_lv])
 
     decoder = build_decoder_model(latent_dim, batch_size)
     decoded = decoder(z)
@@ -196,8 +201,6 @@ def main():
                         help="Graph latent space")
     parser.add_argument('--graph-grid', dest="graph_grid", default=False, action='store_true',
                         help="Grid of latent space")
-    parser.add_argument('--save-weights', dest="save_weights", default=False, action='store_true',
-                        help="save weights to files")
     args = parser.parse_args()
 
     if args.input_glob is not None:
@@ -238,18 +241,19 @@ def main():
     oldmodel = args.oldmodel
     oldweights = args.oldweights
     if args.load is not None:
-        oldmodel = "{}_model.json".format(args.load)
-        oldweights = "{}_weights.h5".format(args.load)
+        oldmodel = args.load
+        oldweights = args.load
 
-    save_model_filename = args.model
-    save_weights_filename = args.weights
+    save_model_prefix = args.model
+    save_weights_prefix = args.weights
     if args.save is not None:
-        save_model_filename = "{}_model.json".format(args.save)
-        save_weights_filename = "{}_weights.h5".format(args.save)
+        save_model_prefix = args.save
+        save_weights_prefix = args.save
 
     if oldmodel is not None:
         print("loading model")
-        json_file = open(oldmodel, 'r')
+        model_file = "{}_model.json".format(oldmodel)
+        json_file = open(model_file, 'r')
         loaded_model_json = json_file.read()
         json_file.close()
         model = model_from_json(loaded_model_json)
@@ -259,19 +263,31 @@ def main():
 
     # this is how you wire the model up and compile
     img_rows, img_cols, img_chns = 28, 28, 1
-    z_log_var = model.get_layer("z_log_var").output
-    z_mean = model.get_layer("z_mean").output
+    # z_log_var = model.get_layer("z_log_var").output
+    # z_mean = model.get_layer("z_mean").output
+    z_log_var = model.get_layer("encoder").get_layer("z_log_var").output
+    z_mean = model.get_layer("encoder").get_layer("z_mean").output
     model_loss = build_vae_loss(img_rows, img_cols, z_log_var, z_mean)
     model.compile(optimizer='adam', loss=model_loss)
 
-    if save_model_filename is not None:
+    if save_model_prefix is not None:
         # if we want to save the model, the go ahead and do this
+        model_filename = "{}_model.json".format(save_model_prefix)
         model_json = model.to_json()
-        with open(save_model_filename, "w") as json_file:
+        with open(model_filename, "w") as json_file:
+            json_file.write(model_json)
+        model_filename = "{}_encoder.json".format(save_model_prefix)
+        model_json = model.get_layer("encoder").to_json()
+        with open(model_filename, "w") as json_file:
+            json_file.write(model_json)
+        model_filename = "{}_decoder.json".format(save_model_prefix)
+        model_json = model.get_layer("decoder").to_json()
+        with open(model_filename, "w") as json_file:
             json_file.write(model_json)
 
     if oldweights is not None:
-        model.load_weights(oldweights)
+        weights_file = "{}_weights.h5".format(oldweights)
+        model.load_weights(weights_file)
         print("Loaded weights from disk")
 
     # train the VAE on MNIST digits
@@ -287,7 +303,8 @@ def main():
     print('x_train.shape:', x_train.shape, 'x_test.shape:', x_test.shape)
 
     callbacks = []
-    if save_weights_filename is not None:
+    if save_weights_prefix is not None:
+        save_weights_filename = "{}_weights.h5".format(args.save)
         callbacks = [
             ModelCheckpoint(filepath=save_weights_filename, save_weights_only=True, verbose=1, save_best_only=True),
         ]
@@ -322,7 +339,7 @@ def main():
         encoder = build_model(args.batch_size, encoder_only=True)
 
         # display a 2D plot of the digit classes in the latent space
-        x_test_encoded = encoder.predict(x_test, batch_size=args.batch_size)
+        [x_test_encoded, x_log_var] = encoder.predict(x_test, batch_size=args.batch_size)
         plt.figure(figsize=(6, 6))
         plt.scatter(x_test_encoded[:, 0], x_test_encoded[:, 1], c=y_test)
         plt.colorbar()
@@ -359,14 +376,11 @@ def main():
         plt.imshow(figure, cmap='Greys_r')
         plt.savefig("{}/grid.png".format(args.subdir), bbox_inches='tight')
 
-    if args.save_weights:
-        WEIGHTS_FILEPATH = 'mnist_vae.hdf5'
-        MODEL_ARCH_FILEPATH = 'mnist_vae.json'
-
-        generator.save_weights(WEIGHTS_FILEPATH)
-
-        with open(MODEL_ARCH_FILEPATH, 'w') as f:
-            f.write(generator.to_json())
+    if save_weights_prefix is not None:
+        save_weights_filename = "{}_encoder_weights.h5".format(args.save)
+        model.get_layer("encoder").save_weights(save_weights_filename)
+        save_weights_filename = "{}_decoder_weights.h5".format(args.save)
+        model.get_layer("decoder").save_weights(save_weights_filename)
 
 if __name__ == '__main__':
     main()
