@@ -78,7 +78,7 @@ def build_decoder_model(latent_dim, batch_size):
     x_decoded_mean_squash = decoder_mean_squash(x_decoded_relu)
     return Model(z, x_decoded_mean_squash, name="decoder")    
 
-def build_model(batch_size, encoder_only=False):
+def build_encoder_model(latent_dim, batch_size):
     # input image dimensions
     img_rows, img_cols, img_chns = 28, 28, 1
     # number of convolutional filters to use
@@ -87,12 +87,11 @@ def build_model(batch_size, encoder_only=False):
     nb_conv = 3
 
     original_img_size = (img_rows, img_cols, img_chns)
-    latent_dim = 2
     intermediate_dim = 128
-    epsilon_std = 0.01
 
-    x = Input(batch_shape=(batch_size,) + original_img_size)
-    conv_1 = Convolution2D(img_chns, 2, 2, border_mode='same', activation='relu', dim_ordering='tf')(x)
+    input_x = Input(batch_shape=(batch_size,) + original_img_size, name="input")
+
+    conv_1 = Convolution2D(img_chns, 2, 2, border_mode='same', activation='relu', dim_ordering='tf')(input_x)
     conv_2 = Convolution2D(nb_filters, 2, 2,
                            border_mode='same', activation='relu', dim_ordering='tf',
                            subsample=(2, 2))(conv_1)
@@ -108,12 +107,17 @@ def build_model(batch_size, encoder_only=False):
     z_mean = Dense(latent_dim, name="z_mean")(hidden)
     z_log_var = Dense(latent_dim, name="z_log_var")(hidden)
 
-    encoder = Model(x, [z_mean, z_log_var], name="encoder")
+    encoder = Model(input_x, [z_mean, z_log_var], name="encoder")
+    return encoder
 
-    if encoder_only:
-        return encoder
+def build_model(batch_size, encoder_only=False):
+    latent_dim = 2
+    epsilon_std = 0.01
 
-    encoded_z, encoded_z_lv = encoder(x)
+    encoder = build_encoder_model(latent_dim, batch_size)
+    encoder_inputs = encoder.get_layer("input").input
+
+    encoded_z, encoded_z_lv = encoder(encoder_inputs)
 
     # note that "output_shape" isn't necessary with the TensorFlow backend
     # so you could write `Lambda(sampling)([z_mean, z_log_var])`
@@ -127,7 +131,7 @@ def build_model(batch_size, encoder_only=False):
     decoder = build_decoder_model(latent_dim, batch_size)
     decoded = decoder(z)
 
-    vae = Model(x, decoded)
+    vae = Model(encoder_inputs, decoded)
     return vae
 
 def plot_history(subdir, history):
@@ -336,7 +340,7 @@ def main():
 
     if args.graph_latent:
         # build a model to project inputs on the latent space
-        encoder = build_model(args.batch_size, encoder_only=True)
+        encoder = build_encoder_model(2, args.batch_size)
 
         # display a 2D plot of the digit classes in the latent space
         [x_test_encoded, x_log_var] = encoder.predict(x_test, batch_size=args.batch_size)
