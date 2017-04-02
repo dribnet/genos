@@ -12,7 +12,7 @@ from keras import objectives
 from keras.datasets import mnist
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.utils.io_utils import HDF5Matrix
-import tensorflow as tf
+from sklearn.manifold import TSNE
 
 def sampling(args, batch_size, latent_dim, epsilon_std):
     z_mean, z_log_var = args
@@ -110,8 +110,7 @@ def build_encoder_model(latent_dim, batch_size):
     encoder = Model(input_x, [z_mean, z_log_var], name="encoder")
     return encoder
 
-def build_model(batch_size, encoder_only=False):
-    latent_dim = 2
+def build_model(latent_dim, batch_size):
     epsilon_std = 0.01
 
     encoder = build_encoder_model(latent_dim, batch_size)
@@ -155,7 +154,7 @@ def main():
     #general model params
     parser.add_argument('--batch-size', dest='batch_size', default=200, type=int,
                         help='batch-size')
-    parser.add_argument("--z-dim", type=int, dest="z_dim",
+    parser.add_argument("--latent-dim", type=int, dest="latent_dim",
                         default=100, help="Z-vector dimension")
     parser.add_argument('--epochs', dest='epochs', default=100, type=int,
                         help='epochs')
@@ -260,10 +259,11 @@ def main():
         json_file = open(model_file, 'r')
         loaded_model_json = json_file.read()
         json_file.close()
+        print("Loaded {}: {}".format(model_file, len(loaded_model_json)))
         model = model_from_json(loaded_model_json)
     else:
         print("building model")
-        model = build_model(args.batch_size)
+        model = build_model(latent_dim=args.latent_dim, batch_size=args.batch_size)
 
     # this is how you wire the model up and compile
     img_rows, img_cols, img_chns = 28, 28, 1
@@ -333,26 +333,43 @@ def main():
             callbacks=callbacks)
         plot_history(args.subdir, history)
 
-    # model.fit(x_train, x_train,
-    #     validation_data=(x_test, x_test),
-    #     shuffle=True, nb_epoch=100, batch_size=batch_size, verbose=2,
-    #     callbacks=[early_stopping])
+    if save_weights_prefix is not None:
+        save_weights_filename = "{}_encoder_weights.h5".format(args.save)
+        model.get_layer("encoder").save_weights(save_weights_filename)
+        save_weights_filename = "{}_decoder_weights.h5".format(args.save)
+        model.get_layer("decoder").save_weights(save_weights_filename)
 
     if args.graph_latent:
         # build a model to project inputs on the latent space
-        encoder = build_encoder_model(2, args.batch_size)
+        encoder = build_encoder_model(latent_dim=args.latent_dim, batch_size=args.batch_size)
+        trained_encoder = model.get_layer("encoder")
+        encoder.set_weights(trained_encoder.get_weights())
 
         # display a 2D plot of the digit classes in the latent space
         [x_test_encoded, x_log_var] = encoder.predict(x_test, batch_size=args.batch_size)
-        plt.figure(figsize=(6, 6))
-        plt.scatter(x_test_encoded[:, 0], x_test_encoded[:, 1], c=y_test)
-        plt.colorbar()
-        plt.savefig("{}/latent.png".format(args.subdir), bbox_inches='tight')
+        tsne_limit = 2000
+        x_graph = x_test_encoded[:tsne_limit]
+        y_graph = y_test[:tsne_limit]
 
-    if args.graph_grid:
+        if args.latent_dim == 2:
+            plt.figure(figsize=(6, 6))
+            plt.scatter(x_graph[:, 0], x_graph[:, 1], c=y_graph)
+            plt.colorbar()
+            plt.savefig("{}/latent_2d.png".format(args.subdir), bbox_inches='tight')
+
+        tsne_model = TSNE(n_components=2, random_state=0)
+        # np.set_printoptions(suppress=True)
+        tsne = tsne_model.fit_transform(x_graph) 
+        # display a 2D plot of the digit classes in the latent space
+        plt.figure(figsize=(6, 6))
+        plt.scatter(tsne[:, 0], tsne[:, 1], c=y_graph)
+        plt.colorbar()
+        plt.savefig("{}/tsne.png".format(args.subdir), bbox_inches='tight')
+
+    if args.latent_dim==2 and args.graph_grid:
         batch_size = 1
 
-        decoder = build_decoder_model(latent_dim=2, batch_size=1)
+        decoder = build_decoder_model(latent_dim=args.latent_dim, batch_size=1)
         trained_decoder = model.get_layer("decoder")
         decoder.set_weights(trained_decoder.get_weights())
 
@@ -379,12 +396,6 @@ def main():
         plt.figure(figsize=(10, 10))
         plt.imshow(figure, cmap='Greys_r')
         plt.savefig("{}/grid.png".format(args.subdir), bbox_inches='tight')
-
-    if save_weights_prefix is not None:
-        save_weights_filename = "{}_encoder_weights.h5".format(args.save)
-        model.get_layer("encoder").save_weights(save_weights_filename)
-        save_weights_filename = "{}_decoder_weights.h5".format(args.save)
-        model.get_layer("decoder").save_weights(save_weights_filename)
 
 if __name__ == '__main__':
     main()
