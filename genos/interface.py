@@ -34,8 +34,15 @@ class GenosModel:
 
 
     def encode_images(self, images):
-        print("SHAPE: {}".format(images.shape))
-        [x_test_encoded, x_log_var] = self.encoder.predict(images, batch_size=1)
+        s = images.shape
+        # temporary shifting from 3 channels to 1
+        if s[1] == 3:
+            images = images[:,1,:,:].reshape(s[0], s[2], s[3], 1)
+            st_images = images
+        else:
+            st_images = np.stack(images, axis=3)
+        # print("SHAPE: {} -> {}".format(images.shape, st_images.shape))
+        [x_test_encoded, x_log_var] = self.encoder.predict(st_images, batch_size=1)
         return x_test_encoded
 
     def get_zdim(self):
@@ -43,9 +50,11 @@ class GenosModel:
 
     def sample_at(self, z):
         # print("SHAPE: {}".format(z.shape))
-        decoded = self.decoder.predict(z, batch_size=1)
-        if decoded.shape[3] == 1:
+        d = self.decoder.predict(z, batch_size=1)
+        s = d.shape
+        if d.shape[3] == 1:
             # stack 1 channel to 3
-            s = decoded.shape
-            decoded = np.stack([decoded, decoded, decoded], axis=1).reshape([s[0], 3, s[1], s[2]])
+            decoded = np.stack([d, d, d], axis=1).reshape([s[0], 3, s[1], s[2]])
+        else:
+            decoded = np.asarray(np.split(d,s[2],axis=2)).reshape(s[2], s[0], s[1])
         return decoded
